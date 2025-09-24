@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"/>
+  <title>修仙人生管理系统</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet"/>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { background: #f5f6fa; font-family: 'Crimson Text', serif; }
+    .level-label { font-weight: bold; color: #e67e22; }
+    .shop-item { margin-bottom: 1em; }
+    .task-done { text-decoration: line-through; color: #999; }
+  </style>
+</head>
+<body>
+<div class="container py-4">
+  <h1 class="mb-3">修仙人生管理系统</h1>
+  <div id="user-stats" class="mb-4"></div>
+  <h3>任务列表 <button onclick="refreshTasks()" class="btn btn-sm btn-outline-primary">刷新任务</button></h3>
+  <ul id="task-list" class="list-group mb-4"></ul>
+  <h3>商城</h3>
+  <div id="shop-list"></div>
+  <input id="new-item-name" placeholder="物品名称">
+  <input id="new-item-price" placeholder="价格" type="number" min="1">
+  <button onclick="addShopItem()" class="btn btn-sm btn-success mb-3">添加物品</button>
+  <h3>报表分析</h3>
+  <canvas id="reportChart" height="100"></canvas>
+</div>
+<script>
+const LEVELS = [
+  { name: "炼气", need: 100 },
+  { name: "筑基", need: 300 },
+  { name: "结丹", need: 600 },
+  { name: "元婴", need: 1200 },
+  { name: "化神", need: 2500 },
+  { name: "炼虚", need: 5000 },
+  { name: "合体", need: 10000 },
+  { name: "大乘", need: 20000 }
+];
+const ATTRS = ["力量", "敏捷", "智力", "体力", "悟性"];
+let data = JSON.parse(localStorage.getItem("xiuxian-data") || "{}");
+if(!data.attrs) data.attrs = ATTRS.map(x => ({name:x, exp:0, level:0}));
+if(!data.coins) data.coins = 0;
+if(!data.tasks || data.lastTaskDay !== today()) { // 每天刷新任务
+  data.tasks = genDailyTasks();
+  data.lastTaskDay = today();
+}
+if(!data.shop) data.shop = [{name:"灵石", price:50}, {name:"法宝", price:200}];
+if(!data.trend) data.trend = [];
+saveData();
+
+function today() {
+  const d = new Date();
+  return d.getFullYear() + "-" + (d.getMonth()+1) + "-" + d.getDate();
+}
+function genDailyTasks() {
+  // 可自定义任务生成逻辑
+  return [
+    { id:1, name:"修炼冥想", attr:0, exp:15, coins:10, penalty:5, urgent:1, done:false },
+    { id:2, name:"晨跑锻炼", attr:3, exp:10, coins:8, penalty:4, urgent:2, done:false },
+    { id:3, name:"学习新技能", attr:2, exp:20, coins:15, penalty:8, urgent:3, done:false }
+  ];
+}
+
+function saveData() { localStorage.setItem("xiuxian-data", JSON.stringify(data)); }
+function updateStats() {
+  // 五大属性等级和经验，等级由经验累加
+  data.attrs.forEach(attr => {
+    attr.level = calcLevel(attr.exp);
+  });
+  // 总等级=五项等级之和
+  let sumLv = data.attrs.reduce((s,a)=>s+a.level,0);
+  let levelLabel = getLevelLabel(sumLv);
+  document.getElementById("user-stats").innerHTML = `
+    <div>
+      <span class="level-label">修炼者境界：</span> ${levelLabel}（总等级：${sumLv}）
+    </div>
+    <div>
+      <span class="me-2">金币余额：<strong>${data.coins}</strong></span>
+      ${data.attrs.map(attr=>
+        `<span class="me-2">${attr.name}: 等级${attr.level} 经验${attr.exp}</span>`).join("")}
+    </div>
+  `;
+  saveData();
+}
+function calcLevel(exp) {
+  for(let i=LEVELS.length-1; i>=0; i--) {
+    if(exp >= LEVELS[i].need) return i+1;
+  }
+  return 0;
+}
+function getLevelLabel(sumLv) {
+  // 总等级对应修仙境界
+  if(sumLv<5) return LEVELS[0].name;
+  if(sumLv<12) return LEVELS[1].name;
+  if(sumLv<20) return LEVELS[2].name;
+  if(sumLv<35) return LEVELS[3].name;
+  if(sumLv<60) return LEVELS[4].name;
+  if(sumLv<100) return LEVELS[5].name;
+  if(sumLv<160) return LEVELS[6].name;
+  return LEVELS[7].name;
+}
+function showTasks() {
+  let ul = document.getElementById("task-list");
+  ul.innerHTML = "";
+  data.tasks.forEach((t,i)=>{
+    ul.innerHTML += `<li class="list-group-item d-flex justify-content-between ${t.done?'task-done':''}">
+      <span>
+        <b>${t.name}</b> <span class="badge bg-info">${ATTRS[t.attr]}</span>
+        <span class="badge bg-success">经验+${t.exp}</span>
+        <span class="badge bg-warning">金币+${t.coins}</span>
+        <span class="badge bg-danger">惩罚-${t.penalty}</span>
+        <span class="badge bg-dark">紧急度${t.urgent}</span>
+      </span>
+      <span>
+        <button class="btn btn-sm btn-outline-success me-1" ${t.done?'disabled':''} onclick="finishTask(${i})">完成</button>
+        <button class="btn btn-sm btn-outline-danger" ${t.done?'disabled':''} onclick="failTask(${i})">未完成</button>
+      </span>
+    </li>`;
+  });
+}
+function finishTask(idx) {
+  let t = data.tasks[idx];
+  if(!t.done){
+    data.attrs[t.attr].exp += t.exp;
+    data.coins += t.coins;
+    t.done = true;
+    saveTrend();
+    updateStats(); showTasks();
+  }
+}
+function failTask(idx){
+  let t = data.tasks[idx];
+  if(!t.done){
+    data.attrs[t.attr].exp = Math.max(0, data.attrs[t.attr].exp - t.penalty);
+    data.coins = Math.max(0, data.coins - t.penalty);
+    t.done = true;
+    saveTrend();
+    updateStats(); showTasks();
+  }
+}
+function refreshTasks(){
+  // 自动刷新任务列表（每日仅1次）
+  if(data.lastTaskDay !== today()){
+    data.tasks = genDailyTasks();
+    data.lastTaskDay = today();
+    saveData(); showTasks();
+  }else{
+    alert("当天已刷新过任务");
+  }
+}
+function showShop(){
+  let div = document.getElementById("shop-list");
+  div.innerHTML = "";
+  data.shop.forEach((item,idx)=>{
+    div.innerHTML += `<div class="shop-item">
+      <span>${item.name} <span class="badge bg-warning">${item.price}金币</span></span>
+      <button class="btn btn-sm btn-primary" onclick="buyItem(${idx})">购买</button>
+    </div>`;
+  });
+}
+function addShopItem(){
+  let name = document.getElementById("new-item-name").value.trim();
+  let price = parseInt(document.getElementById("new-item-price").value);
+  if(name && price>0){
+    data.shop.push({name, price});
+    saveData(); showShop();
+    document.getElementById("new-item-name").value = "";
+    document.getElementById("new-item-price").value = "";
+  }
+}
+function buyItem(idx){
+  let item = data.shop[idx];
+  if(data.coins >= item.price){
+    data.coins -= item.price;
+    alert(`购买成功：${item.name}`);
+    saveTrend();
+    updateStats(); showShop();
+  }else{
+    alert("金币不足");
+  }
+}
+function saveTrend(){
+  // 保存经验和金币成长数据
+  data.trend.push({
+    date: today(),
+    coins: data.coins,
+    attrs: data.attrs.map(a=>a.exp)
+  });
+  if(data.trend.length>30) data.trend.shift();
+  saveData();
+  showReport();
+}
+function showReport(){
+  let ctx = document.getElementById("reportChart").getContext("2d");
+  let labels = data.trend.map(t=>t.date);
+  let datasets = data.attrs.map((attr,i)=>({
+    label: attr.name+"经验",
+    data: data.trend.map(t=>t.attrs[i]),
+    borderColor: `hsl(${i*60},70%,50%)`, fill:false
+  }));
+  datasets.push({
+    label: "金币",
+    data: data.trend.map(t=>t.coins),
+    borderColor: "#f39c12", fill:false
+  });
+  if(window.reportChart) window.reportChart.destroy();
+  window.reportChart = new Chart(ctx, {
+    type:'line',
+    data:{labels,datasets},
+    options:{responsive:true}
+  });
+}
+
+// 初始化页面
+updateStats(); showTasks(); showShop(); showReport();
+</script>
+</body>
+</html>
